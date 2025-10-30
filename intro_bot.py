@@ -26,7 +26,7 @@ BOOSTER_GRACE_HOURS = 0  # Extra hours for server boosters (0 = same as normal)
 
 # Safety settings
 ENABLE_KICKING = False  # MUST be True to actually kick members (safety switch)
-DRY_RUN_MODE = False  # If True, logs what would happen but doesn't kick
+DRY_RUN_MODE = True  # If True, logs what would happen but doesn't kick
 STARTUP_GRACE_PERIOD_HOURS = 24  # Extra hours added to existing members on first startup
 
 # Store pending members {user_id: {'join_time': timestamp, 'reminded_24': bool, 'reminded_48': bool}}
