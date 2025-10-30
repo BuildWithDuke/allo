@@ -5,6 +5,7 @@
 # Bot data files (don't commit user data)
 pending_members.json
 introduced_members.json
+bot_config.json
 
 # Python
 __pycache__/

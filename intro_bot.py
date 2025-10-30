@@ -33,6 +33,25 @@ STARTUP_GRACE_PERIOD_HOURS = 24  # Extra hours added to existing members on firs
 PENDING_FILE = 'pending_members.json'
 # Store user IDs who have posted introductions (persistent cache)
 INTRODUCED_FILE = 'introduced_members.json'
+# Store bot configuration
+CONFIG_FILE = 'bot_config.json'
+
+def load_config():
+    """Load bot configuration from file"""
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_config():
+    """Save bot configuration to file"""
+    config = {
+        'intro_channel_id': INTRO_CHANNEL_ID,
+        'mod_log_channel_id': MOD_LOG_CHANNEL_ID,
+        'welcome_role_id': WELCOME_ROLE_ID
+    }
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
 
 def load_pending_members():
     """Load pending members from file"""
@@ -69,6 +88,15 @@ def save_introduced_members(introduced_members):
 
 pending_members = load_pending_members()
 introduced_members = load_introduced_members()
+
+# Load saved config on startup
+saved_config = load_config()
+if 'intro_channel_id' in saved_config:
+    INTRO_CHANNEL_ID = saved_config['intro_channel_id']
+if 'mod_log_channel_id' in saved_config:
+    MOD_LOG_CHANNEL_ID = saved_config['mod_log_channel_id']
+if 'welcome_role_id' in saved_config:
+    WELCOME_ROLE_ID = saved_config['welcome_role_id']
 
 def is_member_exempt(member):
     """Check if a member is exempt from intro requirements"""
@@ -424,7 +452,8 @@ async def set_intro_channel(ctx, channel: discord.TextChannel):
     """Set the introductions channel"""
     global INTRO_CHANNEL_ID
     INTRO_CHANNEL_ID = channel.id
-    await ctx.send(f"Introductions channel set to {channel.mention}")
+    save_config()
+    await ctx.send(f"✅ Introductions channel set to {channel.mention} (saved)")
 
 @bot.command(name='setmodlog')
 @commands.has_permissions(administrator=True)
@@ -432,7 +461,8 @@ async def set_mod_log(ctx, channel: discord.TextChannel):
     """Set the mod log channel"""
     global MOD_LOG_CHANNEL_ID
     MOD_LOG_CHANNEL_ID = channel.id
-    await ctx.send(f"Mod log channel set to {channel.mention}")
+    save_config()
+    await ctx.send(f"✅ Mod log channel set to {channel.mention} (saved)")
     await log_to_mod_channel(
         f"✅ Mod logging enabled by **{ctx.author.mention}**",
         discord.Color.green()
@@ -444,7 +474,8 @@ async def set_welcome_role(ctx, role: discord.Role):
     """Set the welcome role to assign after introductions"""
     global WELCOME_ROLE_ID
     WELCOME_ROLE_ID = role.id
-    await ctx.send(f"Welcome role set to {role.mention}")
+    save_config()
+    await ctx.send(f"✅ Welcome role set to {role.mention} (saved)")
     await log_to_mod_channel(
         f"✅ Welcome role set to {role.mention} by **{ctx.author.mention}**",
         discord.Color.green()
