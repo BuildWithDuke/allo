@@ -16,6 +16,13 @@ bot = commands.Bot(command_prefix='!', intents=INTENTS)
 INTRO_CHANNEL_ID = 0  # Replace with your introductions channel ID
 GRACE_PERIOD_HOURS = 72  # Time users have to post before being kicked
 CHECK_INTERVAL_MINUTES = 60  # How often to check for non-introduced members
+REMINDER_TIMES = [24, 48]  # Hours after join to send reminders
+EXEMPT_ROLE_IDS = []  # Role IDs that are exempt from intro requirement
+WELCOME_ROLE_ID = 0  # Role to assign when someone introduces themselves (0 = disabled)
+MOD_LOG_CHANNEL_ID = 0  # Channel to log kicks and warnings (0 = disabled)
+MIN_INTRO_LENGTH = 0  # Minimum intro message length (0 = disabled)
+REQUIRE_KEYWORDS = []  # Keywords required in intro (empty = disabled)
+BOOSTER_GRACE_HOURS = 0  # Extra hours for server boosters (0 = same as normal)
 
 # Store pending members {user_id: {'join_time': timestamp, 'reminded_24': bool, 'reminded_48': bool}}
 PENDING_FILE = 'pending_members.json'
@@ -57,6 +64,32 @@ def save_introduced_members(introduced_members):
 
 pending_members = load_pending_members()
 introduced_members = load_introduced_members()
+
+def is_member_exempt(member):
+    """Check if a member is exempt from intro requirements"""
+    if not EXEMPT_ROLE_IDS:
+        return False
+    member_role_ids = [role.id for role in member.roles]
+    return any(role_id in EXEMPT_ROLE_IDS for role_id in member_role_ids)
+
+def get_member_grace_period(member):
+    """Get grace period for a member (accounts for booster status)"""
+    if BOOSTER_GRACE_HOURS > 0 and member.premium_since:
+        return GRACE_PERIOD_HOURS + BOOSTER_GRACE_HOURS
+    return GRACE_PERIOD_HOURS
+
+async def log_to_mod_channel(message, color=discord.Color.orange()):
+    """Log a message to the mod log channel if configured"""
+    if MOD_LOG_CHANNEL_ID == 0:
+        return
+
+    mod_channel = bot.get_channel(MOD_LOG_CHANNEL_ID)
+    if mod_channel:
+        try:
+            embed = discord.Embed(description=message, color=color, timestamp=datetime.utcnow())
+            await mod_channel.send(embed=embed)
+        except Exception as e:
+            print(f"Failed to log to mod channel: {e}")
 
 async def scan_intro_channel_history():
     """Scan intro channel history on startup to build/update the introduced members cache"""
@@ -109,7 +142,15 @@ async def on_member_join(member):
     if member.bot:
         return  # Ignore bots
 
+    # Check if member is exempt
+    if is_member_exempt(member):
+        print(f'{member.name} joined the server (exempt from intro requirement)')
+        return
+
     print(f'{member.name} joined the server')
+
+    # Get grace period for this member
+    grace_hours = get_member_grace_period(member)
 
     # Add to pending members with current timestamp
     pending_members[str(member.id)] = {
@@ -122,12 +163,16 @@ async def on_member_join(member):
     # Send initial welcome DM
     try:
         intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
+        booster_msg = f" (Server boosters get {grace_hours} hours!)" if member.premium_since and BOOSTER_GRACE_HOURS > 0 else ""
         await member.send(
             f"Welcome to the server! Please introduce yourself in {intro_channel.mention} "
-            f"within {GRACE_PERIOD_HOURS} hours to avoid being removed."
+            f"within {grace_hours} hours to avoid being removed.{booster_msg}"
         )
     except discord.Forbidden:
         print(f"Could not send DM to {member.name}")
+
+    # Log to mod channel
+    await log_to_mod_channel(f"👋 **{member.mention}** joined - tracking for introduction ({grace_hours}h grace period)", discord.Color.blue())
 
 @bot.event
 async def on_message(message):
@@ -135,23 +180,68 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # If message is in intro channel, add to introduced cache and remove from pending
+    # If message is in intro channel, validate and process introduction
     if message.channel.id == INTRO_CHANNEL_ID:
         user_id = str(message.author.id)
 
-        # Add to introduced members cache
+        # Validate minimum length
+        if MIN_INTRO_LENGTH > 0 and len(message.content) < MIN_INTRO_LENGTH:
+            await message.delete()
+            try:
+                await message.author.send(
+                    f"Your introduction was too short. Please write at least {MIN_INTRO_LENGTH} characters. "
+                    f"Tell us about yourself!"
+                )
+            except discord.Forbidden:
+                pass
+            return
+
+        # Validate required keywords
+        if REQUIRE_KEYWORDS:
+            content_lower = message.content.lower()
+            missing_keywords = [kw for kw in REQUIRE_KEYWORDS if kw.lower() not in content_lower]
+            if missing_keywords:
+                await message.delete()
+                try:
+                    await message.author.send(
+                        f"Your introduction is missing required information. "
+                        f"Please include: {', '.join(missing_keywords)}"
+                    )
+                except discord.Forbidden:
+                    pass
+                return
+
+        # Valid introduction - add to introduced members cache
         if message.author.id not in introduced_members:
             introduced_members.add(message.author.id)
             save_introduced_members(introduced_members)
 
         # Remove from pending if they were being tracked
-        if user_id in pending_members:
+        was_pending = user_id in pending_members
+        if was_pending:
             print(f'{message.author.name} posted introduction')
             del pending_members[user_id]
             save_pending_members(pending_members)
 
-            # React to their intro
-            await message.add_reaction('✅')
+        # Assign welcome role if configured
+        if WELCOME_ROLE_ID != 0:
+            try:
+                role = message.guild.get_role(WELCOME_ROLE_ID)
+                if role and role not in message.author.roles:
+                    await message.author.add_roles(role, reason="Posted introduction")
+                    print(f"Assigned welcome role to {message.author.name}")
+            except discord.Forbidden:
+                print(f"Missing permissions to assign welcome role to {message.author.name}")
+
+        # React to their intro
+        await message.add_reaction('✅')
+
+        # Log to mod channel
+        if was_pending:
+            await log_to_mod_channel(
+                f"✅ **{message.author.mention}** posted their introduction - no longer tracking",
+                discord.Color.green()
+            )
 
     # Process commands
     await bot.process_commands(message)
@@ -180,57 +270,84 @@ async def check_introductions():
         if not member:
             continue
 
+        # Get grace period for this member (might be different for boosters)
+        member_grace_hours = get_member_grace_period(member)
+
         intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
 
-        # Send 24-hour reminder
-        if hours_elapsed >= 24 and not user_data['reminded_24']:
-            hours_left = GRACE_PERIOD_HOURS - hours_elapsed
-            try:
-                await member.send(
-                    f"**Reminder:** You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
-                    f"Please post your introduction to avoid being removed from the server."
-                )
-                print(f"Sent 24-hour reminder to {member.name}")
-                user_data['reminded_24'] = True
-                save_needed = True
-            except discord.Forbidden:
-                print(f"Could not send 24-hour reminder to {member.name}")
+        # Send reminders based on REMINDER_TIMES config
+        for i, reminder_hour in enumerate(REMINDER_TIMES):
+            reminder_key = f'reminded_{reminder_hour}'
 
-        # Send 48-hour reminder
-        if hours_elapsed >= 48 and not user_data['reminded_48']:
-            hours_left = GRACE_PERIOD_HOURS - hours_elapsed
-            try:
-                await member.send(
-                    f"**Final Reminder:** You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
-                    f"This is your last warning before being removed from the server!"
-                )
-                print(f"Sent 48-hour reminder to {member.name}")
-                user_data['reminded_48'] = True
-                save_needed = True
-            except discord.Forbidden:
-                print(f"Could not send 48-hour reminder to {member.name}")
+            # Initialize reminder key if it doesn't exist (for backwards compatibility)
+            if reminder_key not in user_data:
+                user_data[reminder_key] = False
 
-        # If grace period has passed (72 hours), kick the member
-        if hours_elapsed >= GRACE_PERIOD_HOURS:
+            if hours_elapsed >= reminder_hour and not user_data[reminder_key]:
+                hours_left = member_grace_hours - hours_elapsed
+
+                # Determine if this is the final reminder
+                is_final = i == len(REMINDER_TIMES) - 1
+                reminder_prefix = "**Final Reminder:**" if is_final else "**Reminder:**"
+
+                try:
+                    await member.send(
+                        f"{reminder_prefix} You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
+                        f"Please post your introduction to avoid being removed from the server."
+                    )
+                    print(f"Sent {reminder_hour}-hour reminder to {member.name}")
+                    user_data[reminder_key] = True
+                    save_needed = True
+
+                    # Log to mod channel
+                    await log_to_mod_channel(
+                        f"⏰ Sent {reminder_hour}h reminder to **{member.mention}** ({hours_left:.0f}h remaining)",
+                        discord.Color.orange()
+                    )
+                except discord.Forbidden:
+                    print(f"Could not send {reminder_hour}-hour reminder to {member.name}")
+
+        # If grace period has passed, kick the member
+        if hours_elapsed >= member_grace_hours:
             to_remove.append(user_id)
 
             try:
+                # Log to mod channel BEFORE kicking (so we can mention them)
+                await log_to_mod_channel(
+                    f"⚠️ About to kick **{member.mention}** for not introducing themselves within {member_grace_hours}h",
+                    discord.Color.red()
+                )
+
                 # Send final DM before kicking
                 try:
                     await member.send(
                         f"You have been removed from the server for not posting an introduction "
-                        f"in {intro_channel.mention} within {GRACE_PERIOD_HOURS} hours."
+                        f"in {intro_channel.mention} within {member_grace_hours} hours."
                     )
                 except:
                     pass
 
-                await member.kick(reason=f"Did not post introduction within {GRACE_PERIOD_HOURS} hours")
+                await member.kick(reason=f"Did not post introduction within {member_grace_hours} hours")
                 print(f"Kicked {member.name} for not introducing themselves")
+
+                # Log successful kick
+                await log_to_mod_channel(
+                    f"❌ Kicked **{member.name}** (ID: {member.id}) for not introducing themselves",
+                    discord.Color.dark_red()
+                )
 
             except discord.Forbidden:
                 print(f"Missing permissions to kick {member.name}")
+                await log_to_mod_channel(
+                    f"⚠️ Failed to kick **{member.mention}** - missing permissions",
+                    discord.Color.red()
+                )
             except Exception as e:
                 print(f"Error kicking {member.name}: {e}")
+                await log_to_mod_channel(
+                    f"⚠️ Error kicking **{member.mention}**: {e}",
+                    discord.Color.red()
+                )
 
     # Remove kicked members from pending list
     for user_id in to_remove:
@@ -285,6 +402,123 @@ async def set_intro_channel(ctx, channel: discord.TextChannel):
     global INTRO_CHANNEL_ID
     INTRO_CHANNEL_ID = channel.id
     await ctx.send(f"Introductions channel set to {channel.mention}")
+
+@bot.command(name='markintroduced')
+@commands.has_permissions(administrator=True)
+async def mark_introduced(ctx, member: discord.Member):
+    """Manually mark a member as introduced"""
+    user_id = str(member.id)
+
+    # Add to introduced cache
+    introduced_members.add(member.id)
+    save_introduced_members(introduced_members)
+
+    # Remove from pending if tracked
+    was_pending = user_id in pending_members
+    if was_pending:
+        del pending_members[user_id]
+        save_pending_members(pending_members)
+
+    # Assign welcome role if configured
+    if WELCOME_ROLE_ID != 0:
+        try:
+            role = ctx.guild.get_role(WELCOME_ROLE_ID)
+            if role and role not in member.roles:
+                await member.add_roles(role, reason="Manually marked as introduced")
+        except discord.Forbidden:
+            await ctx.send("Warning: Could not assign welcome role (missing permissions)")
+
+    status = "and removed from tracking" if was_pending else "(was not being tracked)"
+    await ctx.send(f"✅ Marked {member.mention} as introduced {status}")
+
+    await log_to_mod_channel(
+        f"✅ **{ctx.author.mention}** manually marked **{member.mention}** as introduced",
+        discord.Color.green()
+    )
+
+@bot.command(name='untrack')
+@commands.has_permissions(administrator=True)
+async def untrack_member(ctx, member: discord.Member):
+    """Remove a member from tracking without kicking them"""
+    user_id = str(member.id)
+
+    if user_id not in pending_members:
+        await ctx.send(f"{member.mention} is not currently being tracked.")
+        return
+
+    del pending_members[user_id]
+    save_pending_members(pending_members)
+
+    await ctx.send(f"✅ Stopped tracking {member.mention} (they will not be kicked)")
+
+    await log_to_mod_channel(
+        f"⏸️ **{ctx.author.mention}** stopped tracking **{member.mention}**",
+        discord.Color.blue()
+    )
+
+@bot.command(name='resetcache')
+@commands.has_permissions(administrator=True)
+async def reset_cache(ctx):
+    """Rebuild the introduced members cache from intro channel history"""
+    if INTRO_CHANNEL_ID == 0:
+        await ctx.send("Please set the introductions channel first using !setintrochannel")
+        return
+
+    await ctx.send("Rebuilding cache from intro channel history...")
+
+    # Clear current cache
+    introduced_members.clear()
+
+    # Rescan
+    await scan_intro_channel_history()
+
+    await ctx.send(f"✅ Cache rebuilt! Now tracking {len(introduced_members)} introduced members.")
+
+@bot.command(name='stats')
+@commands.has_permissions(administrator=True)
+async def show_stats(ctx):
+    """Show bot statistics"""
+    embed = discord.Embed(title="Introduction Bot Statistics", color=discord.Color.blue())
+
+    # Pending members
+    pending_count = len(pending_members)
+    embed.add_field(name="📊 Pending Introductions", value=str(pending_count), inline=True)
+
+    # Introduced members
+    introduced_count = len(introduced_members)
+    embed.add_field(name="✅ Introduced Members", value=str(introduced_count), inline=True)
+
+    # Total members in server
+    total_members = len([m for m in ctx.guild.members if not m.bot])
+    embed.add_field(name="👥 Total Members", value=str(total_members), inline=True)
+
+    # Configuration
+    config_text = f"Grace Period: {GRACE_PERIOD_HOURS}h\n"
+    config_text += f"Reminders: {', '.join([f'{h}h' for h in REMINDER_TIMES])}\n"
+    config_text += f"Check Interval: {CHECK_INTERVAL_MINUTES}min\n"
+
+    if BOOSTER_GRACE_HOURS > 0:
+        config_text += f"Booster Bonus: +{BOOSTER_GRACE_HOURS}h\n"
+
+    if EXEMPT_ROLE_IDS:
+        config_text += f"Exempt Roles: {len(EXEMPT_ROLE_IDS)}\n"
+
+    if WELCOME_ROLE_ID != 0:
+        role = ctx.guild.get_role(WELCOME_ROLE_ID)
+        config_text += f"Welcome Role: {role.mention if role else 'Not found'}\n"
+
+    if MIN_INTRO_LENGTH > 0:
+        config_text += f"Min Intro Length: {MIN_INTRO_LENGTH} chars\n"
+
+    if REQUIRE_KEYWORDS:
+        config_text += f"Required Keywords: {', '.join(REQUIRE_KEYWORDS)}\n"
+
+    embed.add_field(name="⚙️ Configuration", value=config_text, inline=False)
+
+    # Recent activity (if we had a stats file, but we don't yet)
+    embed.set_footer(text=f"Intro Channel: #{bot.get_channel(INTRO_CHANNEL_ID).name}" if INTRO_CHANNEL_ID != 0 else "Intro channel not set")
+
+    await ctx.send(embed=embed)
 
 @bot.command(name='scanexisting')
 @commands.has_permissions(administrator=True)
