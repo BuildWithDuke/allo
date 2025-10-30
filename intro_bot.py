@@ -24,6 +24,11 @@ MIN_INTRO_LENGTH = 0  # Minimum intro message length (0 = disabled)
 REQUIRE_KEYWORDS = []  # Keywords required in intro (empty = disabled)
 BOOSTER_GRACE_HOURS = 0  # Extra hours for server boosters (0 = same as normal)
 
+# Safety settings
+ENABLE_KICKING = False  # MUST be True to actually kick members (safety switch)
+DRY_RUN_MODE = False  # If True, logs what would happen but doesn't kick
+STARTUP_GRACE_PERIOD_HOURS = 24  # Extra hours added to existing members on first startup
+
 # Store pending members {user_id: {'join_time': timestamp, 'reminded_24': bool, 'reminded_48': bool}}
 PENDING_FILE = 'pending_members.json'
 # Store user IDs who have posted introductions (persistent cache)
@@ -307,9 +312,27 @@ async def check_introductions():
                 except discord.Forbidden:
                     print(f"Could not send {reminder_hour}-hour reminder to {member.name}")
 
-        # If grace period has passed, kick the member
+        # If grace period has passed, kick the member (with safety checks)
         if hours_elapsed >= member_grace_hours:
+            # Check if kicking is enabled
+            if not ENABLE_KICKING:
+                print(f"[SAFETY] Would kick {member.name} but ENABLE_KICKING=False")
+                await log_to_mod_channel(
+                    f"🛡️ **SAFETY MODE**: Would kick **{member.mention}** but kicking is disabled. Set ENABLE_KICKING=True to allow kicks.",
+                    discord.Color.gold()
+                )
+                continue
+
             to_remove.append(user_id)
+
+            # Dry run mode - log but don't actually kick
+            if DRY_RUN_MODE:
+                print(f"[DRY RUN] Would kick {member.name} for not introducing themselves")
+                await log_to_mod_channel(
+                    f"🔍 **DRY RUN**: Would kick **{member.mention}** ({member_grace_hours}h expired). Set DRY_RUN_MODE=False to enable real kicks.",
+                    discord.Color.orange()
+                )
+                continue
 
             try:
                 # Log to mod channel BEFORE kicking (so we can mention them)
@@ -564,7 +587,7 @@ async def scan_existing(ctx):
 
     embed.add_field(
         name="Next Steps",
-        value=f"Use `!trackexisting <hours>` to start tracking these members\nExample: `!trackexisting 72` gives them 72 hours to introduce",
+        value=f"Use `!trackexisting <hours>` to start tracking these members\nExample: `!trackexisting 72` gives them 72 hours to introduce\n\n⚠️ Recommended: Use `!trackexisting {GRACE_PERIOD_HOURS + STARTUP_GRACE_PERIOD_HOURS}` for first-time setup (includes {STARTUP_GRACE_PERIOD_HOURS}h grace period)",
         inline=False
     )
 
