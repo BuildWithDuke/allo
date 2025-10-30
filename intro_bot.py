@@ -543,6 +543,11 @@ async def show_stats(ctx):
 
     await ctx.send(embed=embed)
 
+@bot.command(name='allo')
+async def allo_test(ctx):
+    """Test command to verify bot is responding"""
+    await ctx.send("Allo! 👋 Bot is working!")
+
 @bot.command(name='scanexisting')
 @commands.has_permissions(administrator=True)
 async def scan_existing(ctx):
