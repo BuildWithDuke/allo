@@ -682,7 +682,7 @@ async def allo_test(ctx):
     """Test command to verify bot is responding"""
     await ctx.send("Allo! 👋 Bot is working!")
 
-@bot.command(name='help')
+@bot.command(name='commands')
 async def show_help(ctx):
     """Show all available commands"""
     embed = discord.Embed(
