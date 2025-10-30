@@ -426,6 +426,30 @@ async def set_intro_channel(ctx, channel: discord.TextChannel):
     INTRO_CHANNEL_ID = channel.id
     await ctx.send(f"Introductions channel set to {channel.mention}")
 
+@bot.command(name='setmodlog')
+@commands.has_permissions(administrator=True)
+async def set_mod_log(ctx, channel: discord.TextChannel):
+    """Set the mod log channel"""
+    global MOD_LOG_CHANNEL_ID
+    MOD_LOG_CHANNEL_ID = channel.id
+    await ctx.send(f"Mod log channel set to {channel.mention}")
+    await log_to_mod_channel(
+        f"✅ Mod logging enabled by **{ctx.author.mention}**",
+        discord.Color.green()
+    )
+
+@bot.command(name='setwelcomerole')
+@commands.has_permissions(administrator=True)
+async def set_welcome_role(ctx, role: discord.Role):
+    """Set the welcome role to assign after introductions"""
+    global WELCOME_ROLE_ID
+    WELCOME_ROLE_ID = role.id
+    await ctx.send(f"Welcome role set to {role.mention}")
+    await log_to_mod_channel(
+        f"✅ Welcome role set to {role.mention} by **{ctx.author.mention}**",
+        discord.Color.green()
+    )
+
 @bot.command(name='markintroduced')
 @commands.has_permissions(administrator=True)
 async def mark_introduced(ctx, member: discord.Member):
