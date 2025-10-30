@@ -309,6 +309,9 @@ async def check_introductions():
         intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
 
         # Send reminders based on REMINDER_TIMES config
+        # Only send ONE reminder per check cycle to avoid spam
+        reminder_sent_this_cycle = False
+
         for i, reminder_hour in enumerate(REMINDER_TIMES):
             reminder_key = f'reminded_{reminder_hour}'
 
@@ -316,29 +319,48 @@ async def check_introductions():
             if reminder_key not in user_data:
                 user_data[reminder_key] = False
 
-            if hours_elapsed >= reminder_hour and not user_data[reminder_key]:
-                hours_left = member_grace_hours - hours_elapsed
+            # Only send if: within 1 hour of reminder time OR it's the next unsent reminder
+            time_since_reminder = hours_elapsed - reminder_hour
+            is_within_window = 0 <= time_since_reminder <= 1
 
-                # Determine if this is the final reminder
-                is_final = i == len(REMINDER_TIMES) - 1
-                reminder_prefix = "**Final Reminder:**" if is_final else "**Reminder:**"
+            # Check if this is the next reminder they should receive
+            is_next_reminder = not user_data[reminder_key]
+            if i > 0:
+                prev_reminder_key = f'reminded_{REMINDER_TIMES[i-1]}'
+                if prev_reminder_key in user_data:
+                    is_next_reminder = is_next_reminder and user_data[prev_reminder_key]
 
-                try:
-                    await member.send(
-                        f"{reminder_prefix} You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
-                        f"Please post your introduction to avoid being removed from the server."
-                    )
-                    print(f"Sent {reminder_hour}-hour reminder to {member.name}")
+            if hours_elapsed >= reminder_hour and not user_data[reminder_key] and not reminder_sent_this_cycle:
+                # Only send if within window OR this is catch-up for the LATEST missed reminder
+                if is_within_window or (is_next_reminder and i == len(REMINDER_TIMES) - 1):
+                    hours_left = member_grace_hours - hours_elapsed
+
+                    # Determine if this is the final reminder
+                    is_final = i == len(REMINDER_TIMES) - 1
+                    reminder_prefix = "**Final Reminder:**" if is_final else "**Reminder:**"
+
+                    try:
+                        await member.send(
+                            f"{reminder_prefix} You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
+                            f"Please post your introduction to avoid being removed from the server."
+                        )
+                        print(f"Sent {reminder_hour}-hour reminder to {member.name}")
+                        user_data[reminder_key] = True
+                        save_needed = True
+                        reminder_sent_this_cycle = True
+
+                        # Log to mod channel
+                        await log_to_mod_channel(
+                            f"⏰ Sent {reminder_hour}h reminder to **{member.mention}** ({hours_left:.0f}h remaining)",
+                            discord.Color.orange()
+                        )
+                    except discord.Forbidden:
+                        print(f"Could not send {reminder_hour}-hour reminder to {member.name}")
+                elif not is_within_window:
+                    # Mark as sent to avoid sending old reminders
                     user_data[reminder_key] = True
                     save_needed = True
-
-                    # Log to mod channel
-                    await log_to_mod_channel(
-                        f"⏰ Sent {reminder_hour}h reminder to **{member.mention}** ({hours_left:.0f}h remaining)",
-                        discord.Color.orange()
-                    )
-                except discord.Forbidden:
-                    print(f"Could not send {reminder_hour}-hour reminder to {member.name}")
+                    print(f"Skipped {reminder_hour}-hour reminder for {member.name} (too late)")
 
         # If grace period has passed, kick the member (with safety checks)
         if hours_elapsed >= member_grace_hours:
