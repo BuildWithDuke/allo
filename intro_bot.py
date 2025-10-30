@@ -552,23 +552,80 @@ async def reset_cache(ctx):
 
     await ctx.send(f"✅ Cache rebuilt! Now tracking {len(introduced_members)} introduced members.")
 
+@bot.command(name='cleanup')
+@commands.has_permissions(administrator=True)
+async def cleanup_tracking(ctx):
+    """Remove members who left the server from tracking lists"""
+    # Clean up pending members
+    pending_removed = []
+    for user_id in list(pending_members.keys()):
+        member = ctx.guild.get_member(int(user_id))
+        if not member:
+            pending_removed.append(user_id)
+            del pending_members[user_id]
+
+    if pending_removed:
+        save_pending_members(pending_members)
+
+    # Clean up introduced members
+    current_member_ids = {m.id for m in ctx.guild.members}
+    introduced_removed = []
+    for user_id in list(introduced_members):
+        if user_id not in current_member_ids:
+            introduced_removed.append(user_id)
+            introduced_members.remove(user_id)
+
+    if introduced_removed:
+        save_introduced_members(introduced_members)
+
+    # Report
+    embed = discord.Embed(title="Cleanup Complete", color=discord.Color.green())
+    embed.add_field(name="Pending List", value=f"Removed {len(pending_removed)} members who left", inline=True)
+    embed.add_field(name="Introduced List", value=f"Removed {len(introduced_removed)} members who left", inline=True)
+    embed.add_field(name="Total Cleaned", value=str(len(pending_removed) + len(introduced_removed)), inline=True)
+
+    await ctx.send(embed=embed)
+
 @bot.command(name='stats')
 @commands.has_permissions(administrator=True)
 async def show_stats(ctx):
     """Show bot statistics"""
     embed = discord.Embed(title="Introduction Bot Statistics", color=discord.Color.blue())
 
-    # Pending members
+    # Clean up pending members who left the server
+    to_remove = []
+    for user_id in pending_members.keys():
+        member = ctx.guild.get_member(int(user_id))
+        if not member:
+            to_remove.append(user_id)
+
+    for user_id in to_remove:
+        del pending_members[user_id]
+
+    if to_remove:
+        save_pending_members(pending_members)
+
+    # Pending members (still in server)
     pending_count = len(pending_members)
     embed.add_field(name="📊 Pending Introductions", value=str(pending_count), inline=True)
 
-    # Introduced members
-    introduced_count = len(introduced_members)
-    embed.add_field(name="✅ Introduced Members", value=str(introduced_count), inline=True)
+    # Introduced members (still in server)
+    current_member_ids = {m.id for m in ctx.guild.members if not m.bot}
+    introduced_in_server = len(introduced_members & current_member_ids)
+    embed.add_field(name="✅ Introduced Members", value=str(introduced_in_server), inline=True)
 
     # Total members in server
     total_members = len([m for m in ctx.guild.members if not m.bot])
     embed.add_field(name="👥 Total Members", value=str(total_members), inline=True)
+
+    # Show breakdown
+    untracked = total_members - pending_count - introduced_in_server
+    if untracked > 0:
+        embed.add_field(
+            name="⚠️ Untracked Members",
+            value=f"{untracked} members (use !scanexisting to find them)",
+            inline=False
+        )
 
     # Configuration
     config_text = f"Grace Period: {GRACE_PERIOD_HOURS}h\n"
