@@ -319,20 +319,27 @@ async def check_introductions():
             if reminder_key not in user_data:
                 user_data[reminder_key] = False
 
-            # Only send if: within 1 hour of reminder time OR it's the next unsent reminder
-            time_since_reminder = hours_elapsed - reminder_hour
-            is_within_window = 0 <= time_since_reminder <= 1
+            # Skip if already sent
+            if user_data[reminder_key]:
+                continue
 
-            # Check if this is the next reminder they should receive
-            is_next_reminder = not user_data[reminder_key]
-            if i > 0:
-                prev_reminder_key = f'reminded_{REMINDER_TIMES[i-1]}'
-                if prev_reminder_key in user_data:
-                    is_next_reminder = is_next_reminder and user_data[prev_reminder_key]
+            # Check if it's time for this reminder
+            if hours_elapsed >= reminder_hour and not reminder_sent_this_cycle:
+                # For catch-up: only send the LAST unsent reminder, skip earlier ones
+                # Check if there are later reminders we should send instead
+                should_skip = False
+                for j in range(i + 1, len(REMINDER_TIMES)):
+                    later_reminder_hour = REMINDER_TIMES[j]
+                    if hours_elapsed >= later_reminder_hour:
+                        # There's a later reminder we should send instead
+                        should_skip = True
+                        # Mark this one as sent so we don't try again
+                        user_data[reminder_key] = True
+                        save_needed = True
+                        print(f"Skipped {reminder_hour}-hour reminder for {member.name} (sending later reminder instead)")
+                        break
 
-            if hours_elapsed >= reminder_hour and not user_data[reminder_key] and not reminder_sent_this_cycle:
-                # Only send if within window OR this is catch-up for the LATEST missed reminder
-                if is_within_window or (is_next_reminder and i == len(REMINDER_TIMES) - 1):
+                if not should_skip:
                     hours_left = member_grace_hours - hours_elapsed
 
                     # Determine if this is the final reminder
@@ -356,11 +363,9 @@ async def check_introductions():
                         )
                     except discord.Forbidden:
                         print(f"Could not send {reminder_hour}-hour reminder to {member.name}")
-                elif not is_within_window:
-                    # Mark as sent to avoid sending old reminders
-                    user_data[reminder_key] = True
-                    save_needed = True
-                    print(f"Skipped {reminder_hour}-hour reminder for {member.name} (too late)")
+
+                    # Stop after sending one reminder
+                    break
 
         # If grace period has passed, kick the member (with safety checks)
         if hours_elapsed >= member_grace_hours:
