@@ -682,6 +682,61 @@ async def allo_test(ctx):
     """Test command to verify bot is responding"""
     await ctx.send("Allo! 👋 Bot is working!")
 
+@bot.command(name='help')
+async def show_help(ctx):
+    """Show all available commands"""
+    embed = discord.Embed(
+        title="Allo Bot - Command Reference",
+        description="Introduction enforcement bot with reminders and auto-kick",
+        color=discord.Color.blue()
+    )
+
+    # Basic Commands
+    embed.add_field(
+        name="🧪 Testing",
+        value="`!allo` - Test if bot is responding",
+        inline=False
+    )
+
+    # Setup Commands
+    setup_cmds = (
+        "`!setintrochannel #channel` - Set introductions channel\n"
+        "`!setmodlog #channel` - Set mod log channel\n"
+        "`!setwelcomerole @role` - Set role to assign after intro"
+    )
+    embed.add_field(name="⚙️ Setup Commands (Admin)", value=setup_cmds, inline=False)
+
+    # Management Commands
+    manage_cmds = (
+        "`!checkpending` - View members pending introduction\n"
+        "`!scanexisting` - Find existing members without intros\n"
+        "`!trackexisting <hours>` - Start tracking existing members\n"
+        "`!stats` - View bot statistics and config"
+    )
+    embed.add_field(name="📊 Management Commands (Admin)", value=manage_cmds, inline=False)
+
+    # Override Commands
+    override_cmds = (
+        "`!markintroduced @user` - Manually mark user as introduced\n"
+        "`!untrack @user` - Stop tracking without kicking\n"
+        "`!cleanup` - Remove left members from tracking\n"
+        "`!resetcache` - Rebuild intro cache from history"
+    )
+    embed.add_field(name="🔧 Override Commands (Admin)", value=override_cmds, inline=False)
+
+    # Current Config
+    config_info = (
+        f"Grace Period: **{GRACE_PERIOD_HOURS}h**\n"
+        f"Reminders: **{', '.join([f'{h}h' for h in REMINDER_TIMES])}**\n"
+        f"Kicking: **{'✅ Enabled' if ENABLE_KICKING else '🛡️ Disabled (Safety)'}**\n"
+        f"Dry Run: **{'🔍 Yes (No kicks)' if DRY_RUN_MODE else '❌ No (Live)'}**"
+    )
+    embed.add_field(name="⚡ Current Settings", value=config_info, inline=False)
+
+    embed.set_footer(text="Use !stats for detailed statistics | All admin commands require Administrator permission")
+
+    await ctx.send(embed=embed)
+
 @bot.command(name='scanexisting')
 @commands.has_permissions(administrator=True)
 async def scan_existing(ctx):
