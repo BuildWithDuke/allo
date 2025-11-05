@@ -399,6 +399,35 @@ async def check_introductions():
             # Only send ONE reminder per check cycle to avoid spam
             reminder_sent_this_cycle = False
 
+            # If member has custom deadline > 24h, send extra 24h reminder
+            if 'deadline' in user_data and member_grace_hours > GRACE_PERIOD_HOURS:
+                # Check if we need to send 24-hour remaining reminder
+                reminder_24h_key = 'reminded_24h_remaining'
+                if reminder_24h_key not in user_data:
+                    user_data[reminder_24h_key] = False
+
+                hours_until_deadline = member_grace_hours - hours_elapsed
+                if hours_until_deadline <= 24 and not user_data[reminder_24h_key] and not reminder_sent_this_cycle:
+                    hours_left = member_grace_hours - hours_elapsed
+                    try:
+                        await member.send(
+                            f"**Reminder:** You have **24 hours** remaining to introduce yourself in {intro_channel.mention}. "
+                            f"Please post your introduction to avoid being removed from the server."
+                        )
+                        print(f"Guild {guild_id}: Sent 24h-remaining reminder to {member.name}")
+                        user_data[reminder_24h_key] = True
+                        save_needed = True
+                        reminder_sent_this_cycle = True
+
+                        # Log to mod channel
+                        await log_to_mod_channel(
+                            guild_id,
+                            f"⏰ Sent 24h-remaining reminder to **{member.mention}** ({hours_left:.0f}h remaining)",
+                            discord.Color.orange()
+                        )
+                    except discord.Forbidden:
+                        print(f"Guild {guild_id}: Could not send 24h-remaining reminder to {member.name}")
+
             for i, reminder_hour in enumerate(REMINDER_TIMES):
                 reminder_key = f'reminded_{reminder_hour}'
 
