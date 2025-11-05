@@ -927,8 +927,12 @@ async def scan_existing(ctx, page: int = 1):
     page_members = unintroduced[start_idx:end_idx]
 
     # Create embed showing results
+    title = "Unintroduced Existing Members"
+    if total_pages > 1:
+        title += f" (Page {page}/{total_pages})"
+
     embed = discord.Embed(
-        title=f"Unintroduced Existing Members (Page {page}/{total_pages})",
+        title=title,
         description=f"Found {len(unintroduced)} members who haven't posted in {intro_channel.mention}",
         color=discord.Color.red()
     )
