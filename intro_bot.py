@@ -920,7 +920,15 @@ async def scan_existing(ctx, page: int = 1):
     # Pagination
     per_page = 25
     total_pages = (len(unintroduced) + per_page - 1) // per_page  # Ceiling division
+    requested_page = page
     page = max(1, min(page, total_pages))  # Clamp to valid range
+
+    # Show warning if page was out of range
+    if requested_page != page:
+        if requested_page < 1:
+            await ctx.send(f"⚠️ Page {requested_page} doesn't exist. Showing page 1 instead.")
+        else:
+            await ctx.send(f"⚠️ Page {requested_page} doesn't exist (only {total_pages} page{'s' if total_pages > 1 else ''}). Showing page {total_pages} instead.")
 
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
