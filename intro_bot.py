@@ -933,12 +933,19 @@ async def show_help(ctx):
 
     # Management Commands
     manage_cmds = (
-        "`!checkpending` - View members pending introduction\n"
-        "`!scanexisting` - Find existing members without intros\n"
-        "`!trackexisting <hours>` - Start tracking existing members\n"
+        "`!scanexisting [page]` - Find untracked members (not being tracked yet)\n"
+        "`!trackexisting <hours>` - Add untracked members to tracking list\n"
+        "`!checkpending [page]` - View tracked members (currently being tracked)\n"
         "`!stats` - View bot statistics and config"
     )
     embed.add_field(name="📊 Management Commands (Admin)", value=manage_cmds, inline=False)
+
+    # Workflow explanation
+    workflow = (
+        "**Workflow:** Use `!scanexisting` to find untracked members, then `!trackexisting 72` "
+        "to start tracking them. Use `!checkpending` to see who's being tracked and their time remaining."
+    )
+    embed.add_field(name="💡 How It Works", value=workflow, inline=False)
 
     # Override Commands
     override_cmds = (
@@ -951,8 +958,9 @@ async def show_help(ctx):
 
     # Current Config
     config_info = (
-        f"Grace Period: **{GRACE_PERIOD_HOURS}h**\n"
+        f"Grace Period: **{GRACE_PERIOD_HOURS}h** (new members)\n"
         f"Reminders: **{', '.join([f'{h}h' for h in REMINDER_TIMES])}**\n"
+        f"Background Checks: **{'✅ Enabled' if ENABLE_BACKGROUND_CHECKS else '⚠️ DISABLED (Testing Mode)'}**\n"
         f"Kicking: **{'✅ Enabled' if ENABLE_KICKING else '🛡️ Disabled (Safety)'}**\n"
         f"Dry Run: **{'🔍 Yes (No kicks)' if DRY_RUN_MODE else '❌ No (Live)'}**"
     )
