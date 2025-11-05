@@ -565,24 +565,32 @@ async def before_check():
 # Admin commands
 @bot.command(name='checkpending')
 @commands.has_permissions(administrator=True)
-async def check_pending(ctx):
+async def check_pending(ctx, page: int = 1):
     """Check how many members are pending introduction"""
     guild_id = str(ctx.guild.id)
     guild_data = get_guild_data(guild_id)
     pending_members = guild_data['pending']
+    current_time = datetime.utcnow()
 
     if not pending_members:
         await ctx.send("No members are pending introduction.")
         return
 
-    embed = discord.Embed(title="Pending Introductions", color=discord.Color.orange())
-
+    # Build list of pending members with their info
+    pending_list = []
     for user_id, user_data in pending_members.items():
         member = ctx.guild.get_member(int(user_id))
         if member:
             join_time = datetime.fromisoformat(user_data['join_time'])
-            time_left = timedelta(hours=GRACE_PERIOD_HOURS) - (datetime.utcnow() - join_time)
-            hours_left = max(0, time_left.total_seconds() / 3600)
+
+            # Calculate time remaining using deadline if available
+            if 'deadline' in user_data:
+                deadline = datetime.fromisoformat(user_data['deadline'])
+                time_until_deadline = deadline - current_time
+                hours_left = max(0, time_until_deadline.total_seconds() / 3600)
+            else:
+                time_left = timedelta(hours=GRACE_PERIOD_HOURS) - (current_time - join_time)
+                hours_left = max(0, time_left.total_seconds() / 3600)
 
             # Show reminder status
             status = []
@@ -592,11 +600,45 @@ async def check_pending(ctx):
                     status.append(f"{reminder_hour}hr ✓")
             status_str = f" ({', '.join(status)})" if status else ""
 
-            embed.add_field(
-                name=member.name,
-                value=f"{hours_left:.1f} hours remaining{status_str}",
-                inline=False
-            )
+            pending_list.append((member, hours_left, status_str))
+
+    # Pagination
+    per_page = 25
+    total_pages = (len(pending_list) + per_page - 1) // per_page
+    requested_page = page
+    page = max(1, min(page, total_pages))
+
+    # Show warning if page out of range
+    if requested_page != page:
+        if requested_page < 1:
+            await ctx.send(f"⚠️ Page {requested_page} doesn't exist. Showing page 1 instead.")
+        else:
+            await ctx.send(f"⚠️ Page {requested_page} doesn't exist (only {total_pages} page{'s' if total_pages > 1 else ''}). Showing page {total_pages} instead.")
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_members = pending_list[start_idx:end_idx]
+
+    # Create embed
+    title = "Pending Introductions"
+    if total_pages > 1:
+        title += f" (Page {page}/{total_pages})"
+
+    embed = discord.Embed(
+        title=title,
+        description=f"{len(pending_list)} members pending introduction",
+        color=discord.Color.orange()
+    )
+
+    for member, hours_left, status_str in page_members:
+        embed.add_field(
+            name=member.name,
+            value=f"{hours_left:.1f} hours remaining{status_str}",
+            inline=False
+        )
+
+    if total_pages > 1:
+        embed.set_footer(text=f"Page {page}/{total_pages} • Use !checkpending {page+1 if page < total_pages else 1} for next page")
 
     await ctx.send(embed=embed)
 
