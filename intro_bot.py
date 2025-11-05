@@ -23,7 +23,7 @@ BOOSTER_GRACE_HOURS = 0  # Extra hours for server boosters (0 = same as normal)
 # Safety settings
 ENABLE_KICKING = False  # MUST be True to actually kick members (safety switch)
 DRY_RUN_MODE = True  # If True, logs what would happen but doesn't kick
-ENABLE_BACKGROUND_CHECKS = True  # If False, disables reminder/kick loop entirely (testing mode)
+ENABLE_BACKGROUND_CHECKS = False  # If False, disables reminder/kick loop entirely (testing mode)
 STARTUP_GRACE_PERIOD_HOURS = 24  # Extra hours added to existing members on first startup
 
 # Per-guild file storage - each guild gets its own files
@@ -987,22 +987,29 @@ async def track_existing(ctx, grace_hours: int = None):
             pending_members[str(member.id)] = reminder_data
             added_count += 1
 
-            # Send them a DM notification
-            try:
-                await member.send(
-                    f"Hello! Our server now requires all members to post an introduction in {intro_channel.mention}. "
-                    f"You have **{grace_hours} hours** to introduce yourself or you will be removed from the server. "
-                    f"Thank you for understanding!"
-                )
-            except discord.Forbidden:
-                print(f"[{ctx.guild.name}] Could not send DM to {member.name}")
+            # Send them a DM notification (only if background checks are enabled)
+            if ENABLE_BACKGROUND_CHECKS:
+                try:
+                    await member.send(
+                        f"Hello! Our server now requires all members to post an introduction in {intro_channel.mention}. "
+                        f"You have **{grace_hours} hours** to introduce yourself or you will be removed from the server. "
+                        f"Thank you for understanding!"
+                    )
+                except discord.Forbidden:
+                    print(f"[{ctx.guild.name}] Could not send DM to {member.name}")
+            else:
+                print(f"[{ctx.guild.name}] Skipped DM to {member.name} (ENABLE_BACKGROUND_CHECKS=False)")
 
     save_guild_pending(guild_id, pending_members)
 
-    await ctx.send(
-        f"Added {added_count} existing members to the tracking list. "
-        f"They have {grace_hours} hours to introduce themselves."
-    )
+    # Build response message
+    response = f"Added {added_count} existing members to the tracking list. "
+    if ENABLE_BACKGROUND_CHECKS:
+        response += f"They have {grace_hours} hours to introduce themselves."
+    else:
+        response += f"⚠️ DMs NOT sent (ENABLE_BACKGROUND_CHECKS=False). They have {grace_hours} hours configured."
+
+    await ctx.send(response)
 
 # Run the bot
 if __name__ == "__main__":
