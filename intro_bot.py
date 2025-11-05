@@ -884,7 +884,7 @@ async def show_help(ctx):
 
 @bot.command(name='scanexisting')
 @commands.has_permissions(administrator=True)
-async def scan_existing(ctx):
+async def scan_existing(ctx, page: int = 1):
     """Scan existing members to find who hasn't posted in introductions"""
     guild_id = str(ctx.guild.id)
     guild_data = get_guild_data(guild_id)
@@ -917,19 +917,28 @@ async def scan_existing(ctx):
         await ctx.send("All existing members have posted introductions!")
         return
 
+    # Pagination
+    per_page = 25
+    total_pages = (len(unintroduced) + per_page - 1) // per_page  # Ceiling division
+    page = max(1, min(page, total_pages))  # Clamp to valid range
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_members = unintroduced[start_idx:end_idx]
+
     # Create embed showing results
     embed = discord.Embed(
-        title="Unintroduced Existing Members",
+        title=f"Unintroduced Existing Members (Page {page}/{total_pages})",
         description=f"Found {len(unintroduced)} members who haven't posted in {intro_channel.mention}",
         color=discord.Color.red()
     )
 
-    # Show up to 25 members in the embed (Discord limit)
-    member_list = "\n".join([f"• {member.mention} ({member.name})" for member in unintroduced[:25]])
+    # Show members for this page
+    member_list = "\n".join([f"• {member.mention} ({member.name})" for member in page_members])
     embed.add_field(name="Members", value=member_list or "None", inline=False)
 
-    if len(unintroduced) > 25:
-        embed.set_footer(text=f"Showing 25 of {len(unintroduced)} members")
+    if total_pages > 1:
+        embed.set_footer(text=f"Page {page}/{total_pages} • Use !scanexisting {page+1 if page < total_pages else 1} for next page")
 
     embed.add_field(
         name="Next Steps",
