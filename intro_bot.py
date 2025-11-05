@@ -383,8 +383,13 @@ async def check_introductions():
                 print(f"Guild {guild_id}: Member {user_id} left server, removing from tracking")
                 continue
 
-            # Get grace period for this member (might be different for boosters)
-            member_grace_hours = get_member_grace_period(member)
+            # Get grace period for this member
+            # Use custom grace_hours if set (from !trackexisting), otherwise use default
+            if 'grace_hours' in user_data:
+                member_grace_hours = user_data['grace_hours']
+            else:
+                # Use default grace period (might be different for boosters)
+                member_grace_hours = get_member_grace_period(member)
 
             # Send reminders based on REMINDER_TIMES config
             # Only send ONE reminder per check cycle to avoid spam
@@ -994,14 +999,17 @@ async def track_existing(ctx, grace_hours: int = None):
     # Add unintroduced members to tracking
     added_count = 0
     current_time = datetime.utcnow()
-    backdated_time = current_time - timedelta(hours=GRACE_PERIOD_HOURS - grace_hours)
 
     for member in ctx.guild.members:
         if member.bot:
             continue
         if member.id not in introduced_members and str(member.id) not in pending_members:
             # Initialize with dynamic reminder keys based on REMINDER_TIMES
-            reminder_data = {'join_time': backdated_time.isoformat()}
+            # Store join_time as NOW and custom grace_hours for this batch
+            reminder_data = {
+                'join_time': current_time.isoformat(),
+                'grace_hours': grace_hours  # Custom grace period for trackexisting
+            }
             for reminder_hour in REMINDER_TIMES:
                 reminder_data[f'reminded_{reminder_hour}'] = False
 
