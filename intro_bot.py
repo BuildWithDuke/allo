@@ -14,9 +14,9 @@ bot = commands.Bot(command_prefix='!', intents=INTENTS)
 
 # Configuration - adjust these values
 INTRO_CHANNEL_ID = 0  # Replace with your introductions channel ID
-GRACE_PERIOD_HOURS = 72  # Time users have to post before being kicked
+GRACE_PERIOD_HOURS = 24  # Time users have to post before being kicked
 CHECK_INTERVAL_MINUTES = 60  # How often to check for non-introduced members
-REMINDER_TIMES = [24, 48]  # Hours after join to send reminders
+REMINDER_TIMES = [12]  # Hours after join to send reminders
 EXEMPT_ROLE_IDS = []  # Role IDs that are exempt from intro requirement
 WELCOME_ROLE_ID = 0  # Role to assign when someone introduces themselves (0 = disabled)
 MOD_LOG_CHANNEL_ID = 0  # Channel to log kicks and warnings (0 = disabled)
