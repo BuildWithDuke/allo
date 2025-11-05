@@ -383,10 +383,14 @@ async def check_introductions():
                 print(f"Guild {guild_id}: Member {user_id} left server, removing from tracking")
                 continue
 
-            # Get grace period for this member
-            # Use custom grace_hours if set (from !trackexisting), otherwise use default
-            if 'grace_hours' in user_data:
-                member_grace_hours = user_data['grace_hours']
+            # Calculate time until deadline
+            if 'deadline' in user_data:
+                # Member has custom deadline (from !trackexisting)
+                deadline = datetime.fromisoformat(user_data['deadline'])
+                time_until_deadline = deadline - current_time
+                hours_until_deadline = time_until_deadline.total_seconds() / 3600
+                # Calculate effective grace hours for reminder/kick logic
+                member_grace_hours = hours_elapsed + hours_until_deadline
             else:
                 # Use default grace period (might be different for boosters)
                 member_grace_hours = get_member_grace_period(member)
@@ -999,16 +1003,17 @@ async def track_existing(ctx, grace_hours: int = None):
     # Add unintroduced members to tracking
     added_count = 0
     current_time = datetime.utcnow()
+    deadline = current_time + timedelta(hours=grace_hours)
 
     for member in ctx.guild.members:
         if member.bot:
             continue
         if member.id not in introduced_members and str(member.id) not in pending_members:
             # Initialize with dynamic reminder keys based on REMINDER_TIMES
-            # Store join_time as NOW and custom grace_hours for this batch
+            # Store actual join_time and a deadline for when they'll be kicked
             reminder_data = {
                 'join_time': current_time.isoformat(),
-                'grace_hours': grace_hours  # Custom grace period for trackexisting
+                'deadline': deadline.isoformat()  # When they must intro by
             }
             for reminder_hour in REMINDER_TIMES:
                 reminder_data[f'reminded_{reminder_hour}'] = False
