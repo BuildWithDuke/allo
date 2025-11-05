@@ -1054,9 +1054,8 @@ async def track_existing(ctx, grace_hours: int = None):
             if ENABLE_BACKGROUND_CHECKS:
                 try:
                     await member.send(
-                        f"Hello! Our server now requires all members to post an introduction in {intro_channel.mention}. "
-                        f"You have **{grace_hours} hours** to introduce yourself or you will be removed from the server. "
-                        f"Thank you for understanding!"
+                        f"Welcome to {ctx.guild.name}! To keep our community engaged, we ask everyone to introduce themselves in {intro_channel.mention}. "
+                        f"You have **{grace_hours} hours** to share a bit about yourself. Can't wait to hear from you!"
                     )
                 except discord.Forbidden:
                     print(f"[{ctx.guild.name}] Could not send DM to {member.name}")
