@@ -12,14 +12,10 @@ INTENTS.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=INTENTS)
 
-# Configuration - adjust these values
-INTRO_CHANNEL_ID = 0  # Replace with your introductions channel ID
+# Global configuration (applies to all guilds)
 GRACE_PERIOD_HOURS = 24  # Time users have to post before being kicked
 CHECK_INTERVAL_MINUTES = 60  # How often to check for non-introduced members
 REMINDER_TIMES = [12]  # Hours after join to send reminders
-EXEMPT_ROLE_IDS = []  # Role IDs that are exempt from intro requirement
-WELCOME_ROLE_ID = 0  # Role to assign when someone introduces themselves (0 = disabled)
-MOD_LOG_CHANNEL_ID = 0  # Channel to log kicks and warnings (0 = disabled)
 MIN_INTRO_LENGTH = 0  # Minimum intro message length (0 = disabled)
 REQUIRE_KEYWORDS = []  # Keywords required in intro (empty = disabled)
 BOOSTER_GRACE_HOURS = 0  # Extra hours for server boosters (0 = same as normal)
@@ -27,83 +23,89 @@ BOOSTER_GRACE_HOURS = 0  # Extra hours for server boosters (0 = same as normal)
 # Safety settings
 ENABLE_KICKING = False  # MUST be True to actually kick members (safety switch)
 DRY_RUN_MODE = True  # If True, logs what would happen but doesn't kick
+ENABLE_BACKGROUND_CHECKS = True  # If False, disables reminder/kick loop entirely (testing mode)
 STARTUP_GRACE_PERIOD_HOURS = 24  # Extra hours added to existing members on first startup
 
-# Store pending members {user_id: {'join_time': timestamp, 'reminded_24': bool, 'reminded_48': bool}}
-PENDING_FILE = 'pending_members.json'
-# Store user IDs who have posted introductions (persistent cache)
-INTRODUCED_FILE = 'introduced_members.json'
-# Store bot configuration
-CONFIG_FILE = 'bot_config.json'
+# Per-guild file storage - each guild gets its own files
+def get_guild_file(guild_id, file_type):
+    """Get the filename for a specific guild and file type"""
+    return f'{file_type}_{guild_id}.json'
 
-def load_config():
-    """Load bot configuration from file"""
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
+def load_guild_config(guild_id):
+    """Load configuration for a specific guild"""
+    filename = get_guild_file(guild_id, 'config')
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
             return json.load(f)
-    return {}
-
-def save_config():
-    """Save bot configuration to file"""
-    config = {
-        'intro_channel_id': INTRO_CHANNEL_ID,
-        'mod_log_channel_id': MOD_LOG_CHANNEL_ID,
-        'welcome_role_id': WELCOME_ROLE_ID
+    return {
+        'intro_channel_id': 0,
+        'mod_log_channel_id': 0,
+        'welcome_role_id': 0,
+        'exempt_role_ids': []
     }
-    with open(CONFIG_FILE, 'w') as f:
+
+def save_guild_config(guild_id, config):
+    """Save configuration for a specific guild"""
+    filename = get_guild_file(guild_id, 'config')
+    with open(filename, 'w') as f:
         json.dump(config, f, indent=2)
 
-def load_pending_members():
-    """Load pending members from file"""
-    if os.path.exists(PENDING_FILE):
-        with open(PENDING_FILE, 'r') as f:
+def load_guild_pending(guild_id):
+    """Load pending members for a specific guild"""
+    filename = get_guild_file(guild_id, 'pending')
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
             data = json.load(f)
-            # Migrate old format to new format if needed
+            # Migrate old format if needed
             for user_id, value in data.items():
                 if isinstance(value, str):
                     data[user_id] = {
                         'join_time': value,
-                        'reminded_24': False,
-                        'reminded_48': False
+                        'reminded_12': False
                     }
             return data
     return {}
 
-def save_pending_members(pending_members):
-    """Save pending members to file"""
-    with open(PENDING_FILE, 'w') as f:
+def save_guild_pending(guild_id, pending_members):
+    """Save pending members for a specific guild"""
+    filename = get_guild_file(guild_id, 'pending')
+    with open(filename, 'w') as f:
         json.dump(pending_members, f, indent=2)
 
-def load_introduced_members():
-    """Load set of user IDs who have introduced themselves"""
-    if os.path.exists(INTRODUCED_FILE):
-        with open(INTRODUCED_FILE, 'r') as f:
+def load_guild_introduced(guild_id):
+    """Load introduced members for a specific guild"""
+    filename = get_guild_file(guild_id, 'introduced')
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
             return set(json.load(f))
     return set()
 
-def save_introduced_members(introduced_members):
-    """Save set of user IDs who have introduced themselves"""
-    with open(INTRODUCED_FILE, 'w') as f:
+def save_guild_introduced(guild_id, introduced_members):
+    """Save introduced members for a specific guild"""
+    filename = get_guild_file(guild_id, 'introduced')
+    with open(filename, 'w') as f:
         json.dump(list(introduced_members), f, indent=2)
 
-pending_members = load_pending_members()
-introduced_members = load_introduced_members()
+# Guild-specific data will be loaded on-demand when needed
+guild_data_cache = {}  # {guild_id: {'config': {}, 'pending': {}, 'introduced': set()}}
 
-# Load saved config on startup
-saved_config = load_config()
-if 'intro_channel_id' in saved_config:
-    INTRO_CHANNEL_ID = saved_config['intro_channel_id']
-if 'mod_log_channel_id' in saved_config:
-    MOD_LOG_CHANNEL_ID = saved_config['mod_log_channel_id']
-if 'welcome_role_id' in saved_config:
-    WELCOME_ROLE_ID = saved_config['welcome_role_id']
+def get_guild_data(guild_id):
+    """Get all data for a guild (loads from file if not cached)"""
+    guild_id_str = str(guild_id)
+    if guild_id_str not in guild_data_cache:
+        guild_data_cache[guild_id_str] = {
+            'config': load_guild_config(guild_id_str),
+            'pending': load_guild_pending(guild_id_str),
+            'introduced': load_guild_introduced(guild_id_str)
+        }
+    return guild_data_cache[guild_id_str]
 
-def is_member_exempt(member):
+def is_member_exempt(member, exempt_role_ids):
     """Check if a member is exempt from intro requirements"""
-    if not EXEMPT_ROLE_IDS:
+    if not exempt_role_ids:
         return False
     member_role_ids = [role.id for role in member.roles]
-    return any(role_id in EXEMPT_ROLE_IDS for role_id in member_role_ids)
+    return any(role_id in exempt_role_ids for role_id in member_role_ids)
 
 def get_member_grace_period(member):
     """Get grace period for a member (accounts for booster status)"""
@@ -111,12 +113,15 @@ def get_member_grace_period(member):
         return GRACE_PERIOD_HOURS + BOOSTER_GRACE_HOURS
     return GRACE_PERIOD_HOURS
 
-async def log_to_mod_channel(message, color=discord.Color.orange()):
+async def log_to_mod_channel(guild_id, message, color=discord.Color.orange()):
     """Log a message to the mod log channel if configured"""
-    if MOD_LOG_CHANNEL_ID == 0:
+    config = get_guild_data(guild_id)['config']
+    mod_log_channel_id = config.get('mod_log_channel_id', 0)
+
+    if mod_log_channel_id == 0:
         return
 
-    mod_channel = bot.get_channel(MOD_LOG_CHANNEL_ID)
+    mod_channel = bot.get_channel(mod_log_channel_id)
     if mod_channel:
         try:
             embed = discord.Embed(description=message, color=color, timestamp=datetime.utcnow())
@@ -124,22 +129,29 @@ async def log_to_mod_channel(message, color=discord.Color.orange()):
         except Exception as e:
             print(f"Failed to log to mod channel: {e}")
 
-async def scan_intro_channel_history():
-    """Scan intro channel history on startup to build/update the introduced members cache"""
-    if INTRO_CHANNEL_ID == 0:
-        print("Intro channel not set, skipping initial scan")
+async def scan_intro_channel_history(guild_id, intro_channel_id):
+    """Scan intro channel history to build/update the introduced members cache"""
+    if intro_channel_id == 0:
+        print(f"Guild {guild_id}: Intro channel not set, skipping scan")
         return
 
-    intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
+    intro_channel = bot.get_channel(intro_channel_id)
     if not intro_channel:
-        print(f"Could not find intro channel {INTRO_CHANNEL_ID}")
+        print(f"Guild {guild_id}: Could not find intro channel {intro_channel_id}")
         return
 
-    print("Scanning intro channel history to build cache...")
+    print(f"Guild {guild_id}: Scanning intro channel history...")
+
+    # Use cached data to avoid losing recent changes
+    guild_data = get_guild_data(guild_id)
+    introduced_members = guild_data['introduced']
+    pending_members = guild_data['pending']
 
     try:
         message_count = 0
         new_members = 0
+        reactions_added = 0
+        removed_from_pending = 0
 
         async for message in intro_channel.history(limit=10000):
             message_count += 1
@@ -147,14 +159,43 @@ async def scan_intro_channel_history():
                 introduced_members.add(message.author.id)
                 new_members += 1
 
-        save_introduced_members(introduced_members)
-        print(f"Scanned {message_count} messages, found {new_members} new introduced members")
-        print(f"Total introduced members in cache: {len(introduced_members)}")
+                # Remove from pending if they were being tracked
+                user_id = str(message.author.id)
+                if user_id in pending_members:
+                    del pending_members[user_id]
+                    removed_from_pending += 1
+
+                # Add checkmark reaction if it doesn't have one yet
+                try:
+                    has_checkmark = any(str(reaction.emoji) == '✅' for reaction in message.reactions)
+                    if not has_checkmark:
+                        await message.add_reaction('✅')
+                        reactions_added += 1
+                except discord.Forbidden:
+                    pass  # Missing permissions to add reaction
+                except Exception as e:
+                    print(f"Guild {guild_id}: Could not add reaction to message {message.id}: {e}")
+
+        save_guild_introduced(guild_id, introduced_members)
+        if removed_from_pending > 0:
+            save_guild_pending(guild_id, pending_members)
+
+        print(f"Guild {guild_id}: Scanned {message_count} messages, found {new_members} new intros")
+        print(f"Guild {guild_id}: Total introduced members: {len(introduced_members)}")
+        if reactions_added > 0:
+            print(f"Guild {guild_id}: Added ✅ to {reactions_added} messages")
+        if removed_from_pending > 0:
+            print(f"Guild {guild_id}: Removed {removed_from_pending} members from pending list")
+
+        # Update cache
+        if str(guild_id) in guild_data_cache:
+            guild_data_cache[str(guild_id)]['introduced'] = introduced_members
+            guild_data_cache[str(guild_id)]['pending'] = pending_members
 
     except discord.Forbidden:
-        print("Missing permissions to read intro channel history")
+        print(f"Guild {guild_id}: Missing permissions to read intro channel history")
     except Exception as e:
-        print(f"Error scanning intro channel: {e}")
+        print(f"Guild {guild_id}: Error scanning intro channel: {e}")
 
 @bot.event
 async def on_ready():
@@ -162,12 +203,20 @@ async def on_ready():
     print(f'{bot.user} has connected to Discord!')
     print(f'Bot is in {len(bot.guilds)} guild(s)')
 
-    # Scan intro channel history on startup
-    await scan_intro_channel_history()
+    # Scan intro channel history for ALL guilds on startup
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        config = load_guild_config(guild_id)
+        intro_channel_id = config.get('intro_channel_id', 0)
+        await scan_intro_channel_history(guild_id, intro_channel_id)
 
-    # Start the background task to check for non-introduced members
-    if not check_introductions.is_running():
-        check_introductions.start()
+    # Start the background task to check for non-introduced members (if enabled)
+    if ENABLE_BACKGROUND_CHECKS:
+        if not check_introductions.is_running():
+            check_introductions.start()
+            print("Background reminder/kick checks: ENABLED")
+    else:
+        print("⚠️ Background reminder/kick checks: DISABLED (set ENABLE_BACKGROUND_CHECKS=True to enable)")
 
 @bot.event
 async def on_member_join(member):
@@ -175,37 +224,46 @@ async def on_member_join(member):
     if member.bot:
         return  # Ignore bots
 
+    # Load guild-specific data
+    guild_id = str(member.guild.id)
+    guild_data = get_guild_data(guild_id)
+    config = guild_data['config']
+    pending_members = guild_data['pending']
+
+    exempt_role_ids = config.get('exempt_role_ids', [])
+    intro_channel_id = config.get('intro_channel_id', 0)
+
     # Check if member is exempt
-    if is_member_exempt(member):
-        print(f'{member.name} joined the server (exempt from intro requirement)')
+    if is_member_exempt(member, exempt_role_ids):
+        print(f'Guild {guild_id}: {member.name} joined (exempt from intro requirement)')
         return
 
-    print(f'{member.name} joined the server')
+    print(f'Guild {guild_id}: {member.name} joined the server')
 
     # Get grace period for this member
     grace_hours = get_member_grace_period(member)
 
-    # Add to pending members with current timestamp
-    pending_members[str(member.id)] = {
-        'join_time': datetime.utcnow().isoformat(),
-        'reminded_24': False,
-        'reminded_48': False
-    }
-    save_pending_members(pending_members)
+    # Add to pending members with current timestamp and dynamic reminder keys
+    reminder_data = {'join_time': datetime.utcnow().isoformat()}
+    for reminder_hour in REMINDER_TIMES:
+        reminder_data[f'reminded_{reminder_hour}'] = False
+
+    pending_members[str(member.id)] = reminder_data
+    save_guild_pending(guild_id, pending_members)
 
     # Send initial welcome DM
     try:
-        intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
+        intro_channel = bot.get_channel(intro_channel_id)
         booster_msg = f" (Server boosters get {grace_hours} hours!)" if member.premium_since and BOOSTER_GRACE_HOURS > 0 else ""
         await member.send(
             f"Welcome to the server! Please introduce yourself in {intro_channel.mention} "
             f"within {grace_hours} hours to avoid being removed.{booster_msg}"
         )
     except discord.Forbidden:
-        print(f"Could not send DM to {member.name}")
+        print(f"Guild {guild_id}: Could not send DM to {member.name}")
 
     # Log to mod channel
-    await log_to_mod_channel(f"👋 **{member.mention}** joined - tracking for introduction ({grace_hours}h grace period)", discord.Color.blue())
+    await log_to_mod_channel(guild_id, f"👋 **{member.mention}** joined - tracking for introduction ({grace_hours}h grace period)", discord.Color.blue())
 
 @bot.event
 async def on_message(message):
@@ -213,8 +271,18 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # Load guild-specific data
+    guild_id = str(message.guild.id)
+    guild_data = get_guild_data(guild_id)
+    config = guild_data['config']
+    pending_members = guild_data['pending']
+    introduced_members = guild_data['introduced']
+
+    intro_channel_id = config.get('intro_channel_id', 0)
+    welcome_role_id = config.get('welcome_role_id', 0)
+
     # If message is in intro channel, validate and process introduction
-    if message.channel.id == INTRO_CHANNEL_ID:
+    if message.channel.id == intro_channel_id:
         user_id = str(message.author.id)
 
         # Validate minimum length
@@ -247,24 +315,24 @@ async def on_message(message):
         # Valid introduction - add to introduced members cache
         if message.author.id not in introduced_members:
             introduced_members.add(message.author.id)
-            save_introduced_members(introduced_members)
+            save_guild_introduced(guild_id, introduced_members)
 
         # Remove from pending if they were being tracked
         was_pending = user_id in pending_members
         if was_pending:
-            print(f'{message.author.name} posted introduction')
+            print(f'Guild {guild_id}: {message.author.name} posted introduction')
             del pending_members[user_id]
-            save_pending_members(pending_members)
+            save_guild_pending(guild_id, pending_members)
 
         # Assign welcome role if configured
-        if WELCOME_ROLE_ID != 0:
+        if welcome_role_id != 0:
             try:
-                role = message.guild.get_role(WELCOME_ROLE_ID)
+                role = message.guild.get_role(welcome_role_id)
                 if role and role not in message.author.roles:
                     await message.author.add_roles(role, reason="Posted introduction")
-                    print(f"Assigned welcome role to {message.author.name}")
+                    print(f"Guild {guild_id}: Assigned welcome role to {message.author.name}")
             except discord.Forbidden:
-                print(f"Missing permissions to assign welcome role to {message.author.name}")
+                print(f"Guild {guild_id}: Missing permissions to assign welcome role to {message.author.name}")
 
         # React to their intro
         await message.add_reaction('✅')
@@ -272,6 +340,7 @@ async def on_message(message):
         # Log to mod channel
         if was_pending:
             await log_to_mod_channel(
+                guild_id,
                 f"✅ **{message.author.mention}** posted their introduction - no longer tracking",
                 discord.Color.green()
             )
@@ -285,154 +354,170 @@ async def check_introductions():
     print("Checking for members who haven't introduced themselves...")
 
     current_time = datetime.utcnow()
-    to_remove = []
-    save_needed = False
 
-    for user_id, user_data in pending_members.items():
-        join_time = datetime.fromisoformat(user_data['join_time'])
-        time_elapsed = current_time - join_time
-        hours_elapsed = time_elapsed.total_seconds() / 3600
+    # Check ALL guilds
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        guild_data = get_guild_data(guild_id)
+        config = guild_data['config']
+        pending_members = guild_data['pending']
 
-        # Find the member
-        member = None
-        for guild in bot.guilds:
+        intro_channel_id = config.get('intro_channel_id', 0)
+        intro_channel = bot.get_channel(intro_channel_id)
+
+        to_remove = []
+        save_needed = False
+
+        # Use list() to create snapshot and avoid "dictionary changed size during iteration" error
+        for user_id, user_data in list(pending_members.items()):
+            join_time = datetime.fromisoformat(user_data['join_time'])
+            time_elapsed = current_time - join_time
+            hours_elapsed = time_elapsed.total_seconds() / 3600
+
+            # Find the member in this guild
             member = guild.get_member(int(user_id))
-            if member:
-                break
 
-        if not member:
-            continue
-
-        # Get grace period for this member (might be different for boosters)
-        member_grace_hours = get_member_grace_period(member)
-
-        intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
-
-        # Send reminders based on REMINDER_TIMES config
-        # Only send ONE reminder per check cycle to avoid spam
-        reminder_sent_this_cycle = False
-
-        for i, reminder_hour in enumerate(REMINDER_TIMES):
-            reminder_key = f'reminded_{reminder_hour}'
-
-            # Initialize reminder key if it doesn't exist (for backwards compatibility)
-            if reminder_key not in user_data:
-                user_data[reminder_key] = False
-
-            # Skip if already sent
-            if user_data[reminder_key]:
+            if not member:
+                # Member left the server - remove from tracking
+                to_remove.append(user_id)
+                print(f"Guild {guild_id}: Member {user_id} left server, removing from tracking")
                 continue
 
-            # Check if it's time for this reminder
-            if hours_elapsed >= reminder_hour and not reminder_sent_this_cycle:
-                # For catch-up: only send the LAST unsent reminder, skip earlier ones
-                # Check if there are later reminders we should send instead
-                should_skip = False
-                for j in range(i + 1, len(REMINDER_TIMES)):
-                    later_reminder_hour = REMINDER_TIMES[j]
-                    if hours_elapsed >= later_reminder_hour:
-                        # There's a later reminder we should send instead
-                        should_skip = True
-                        # Mark this one as sent so we don't try again
-                        user_data[reminder_key] = True
-                        save_needed = True
-                        print(f"Skipped {reminder_hour}-hour reminder for {member.name} (sending later reminder instead)")
+            # Get grace period for this member (might be different for boosters)
+            member_grace_hours = get_member_grace_period(member)
+
+            # Send reminders based on REMINDER_TIMES config
+            # Only send ONE reminder per check cycle to avoid spam
+            reminder_sent_this_cycle = False
+
+            for i, reminder_hour in enumerate(REMINDER_TIMES):
+                reminder_key = f'reminded_{reminder_hour}'
+
+                # Initialize reminder key if it doesn't exist (for backwards compatibility)
+                if reminder_key not in user_data:
+                    user_data[reminder_key] = False
+
+                # Skip if already sent
+                if user_data[reminder_key]:
+                    continue
+
+                # Check if it's time for this reminder
+                if hours_elapsed >= reminder_hour and not reminder_sent_this_cycle:
+                    # For catch-up: only send the LAST unsent reminder, skip earlier ones
+                    # Check if there are later reminders we should send instead
+                    should_skip = False
+                    for j in range(i + 1, len(REMINDER_TIMES)):
+                        later_reminder_hour = REMINDER_TIMES[j]
+                        if hours_elapsed >= later_reminder_hour:
+                            # There's a later reminder we should send instead
+                            should_skip = True
+                            # Mark this one as sent so we don't try again
+                            user_data[reminder_key] = True
+                            save_needed = True
+                            print(f"Guild {guild_id}: Skipped {reminder_hour}-hour reminder for {member.name} (sending later reminder instead)")
+                            break
+
+                    if not should_skip:
+                        hours_left = member_grace_hours - hours_elapsed
+
+                        # Determine if this is the final reminder
+                        is_final = i == len(REMINDER_TIMES) - 1
+                        reminder_prefix = "**Final Reminder:**" if is_final else "**Reminder:**"
+
+                        try:
+                            await member.send(
+                                f"{reminder_prefix} You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
+                                f"Please post your introduction to avoid being removed from the server."
+                            )
+                            print(f"Guild {guild_id}: Sent {reminder_hour}-hour reminder to {member.name}")
+                            user_data[reminder_key] = True
+                            save_needed = True
+                            reminder_sent_this_cycle = True
+
+                            # Log to mod channel
+                            await log_to_mod_channel(
+                                guild_id,
+                                f"⏰ Sent {reminder_hour}h reminder to **{member.mention}** ({hours_left:.0f}h remaining)",
+                                discord.Color.orange()
+                            )
+                        except discord.Forbidden:
+                            print(f"Guild {guild_id}: Could not send {reminder_hour}-hour reminder to {member.name}")
+
+                        # Stop after sending one reminder
                         break
 
-                if not should_skip:
-                    hours_left = member_grace_hours - hours_elapsed
+            # If grace period has passed, kick the member (with safety checks)
+            if hours_elapsed >= member_grace_hours:
+                # Check if kicking is enabled
+                if not ENABLE_KICKING:
+                    print(f"[{guild.name}] [SAFETY] Would kick {member.name} but ENABLE_KICKING=False")
+                    await log_to_mod_channel(
+                        guild_id,
+                        f"🛡️ **SAFETY MODE**: Would kick **{member.mention}** but kicking is disabled. Set ENABLE_KICKING=True to allow kicks.",
+                        discord.Color.gold()
+                    )
+                    continue
 
-                    # Determine if this is the final reminder
-                    is_final = i == len(REMINDER_TIMES) - 1
-                    reminder_prefix = "**Final Reminder:**" if is_final else "**Reminder:**"
+                to_remove.append(user_id)
 
+                # Dry run mode - log but don't actually kick
+                if DRY_RUN_MODE:
+                    print(f"[{guild.name}] [DRY RUN] Would kick {member.name} for not introducing themselves")
+                    await log_to_mod_channel(
+                        guild_id,
+                        f"🔍 **DRY RUN**: Would kick **{member.mention}** ({member_grace_hours}h expired). Set DRY_RUN_MODE=False to enable real kicks.",
+                        discord.Color.orange()
+                    )
+                    continue
+
+                try:
+                    # Log to mod channel BEFORE kicking (so we can mention them)
+                    await log_to_mod_channel(
+                        guild_id,
+                        f"⚠️ About to kick **{member.mention}** for not introducing themselves within {member_grace_hours}h",
+                        discord.Color.red()
+                    )
+
+                    # Send final DM before kicking
                     try:
                         await member.send(
-                            f"{reminder_prefix} You have **{hours_left:.0f} hours** remaining to introduce yourself in {intro_channel.mention}. "
-                            f"Please post your introduction to avoid being removed from the server."
+                            f"You have been removed from the server for not posting an introduction "
+                            f"in {intro_channel.mention} within {member_grace_hours} hours."
                         )
-                        print(f"Sent {reminder_hour}-hour reminder to {member.name}")
-                        user_data[reminder_key] = True
-                        save_needed = True
-                        reminder_sent_this_cycle = True
+                    except:
+                        pass
 
-                        # Log to mod channel
-                        await log_to_mod_channel(
-                            f"⏰ Sent {reminder_hour}h reminder to **{member.mention}** ({hours_left:.0f}h remaining)",
-                            discord.Color.orange()
-                        )
-                    except discord.Forbidden:
-                        print(f"Could not send {reminder_hour}-hour reminder to {member.name}")
+                    await member.kick(reason=f"Did not post introduction within {member_grace_hours} hours")
+                    print(f"[{guild.name}] Kicked {member.name} for not introducing themselves")
 
-                    # Stop after sending one reminder
-                    break
-
-        # If grace period has passed, kick the member (with safety checks)
-        if hours_elapsed >= member_grace_hours:
-            # Check if kicking is enabled
-            if not ENABLE_KICKING:
-                print(f"[SAFETY] Would kick {member.name} but ENABLE_KICKING=False")
-                await log_to_mod_channel(
-                    f"🛡️ **SAFETY MODE**: Would kick **{member.mention}** but kicking is disabled. Set ENABLE_KICKING=True to allow kicks.",
-                    discord.Color.gold()
-                )
-                continue
-
-            to_remove.append(user_id)
-
-            # Dry run mode - log but don't actually kick
-            if DRY_RUN_MODE:
-                print(f"[DRY RUN] Would kick {member.name} for not introducing themselves")
-                await log_to_mod_channel(
-                    f"🔍 **DRY RUN**: Would kick **{member.mention}** ({member_grace_hours}h expired). Set DRY_RUN_MODE=False to enable real kicks.",
-                    discord.Color.orange()
-                )
-                continue
-
-            try:
-                # Log to mod channel BEFORE kicking (so we can mention them)
-                await log_to_mod_channel(
-                    f"⚠️ About to kick **{member.mention}** for not introducing themselves within {member_grace_hours}h",
-                    discord.Color.red()
-                )
-
-                # Send final DM before kicking
-                try:
-                    await member.send(
-                        f"You have been removed from the server for not posting an introduction "
-                        f"in {intro_channel.mention} within {member_grace_hours} hours."
+                    # Log successful kick
+                    await log_to_mod_channel(
+                        guild_id,
+                        f"❌ Kicked **{member.name}** (ID: {member.id}) for not introducing themselves",
+                        discord.Color.dark_red()
                     )
-                except:
-                    pass
 
-                await member.kick(reason=f"Did not post introduction within {member_grace_hours} hours")
-                print(f"Kicked {member.name} for not introducing themselves")
+                except discord.Forbidden:
+                    print(f"[{guild.name}] Missing permissions to kick {member.name}")
+                    await log_to_mod_channel(
+                        guild_id,
+                        f"⚠️ Failed to kick **{member.mention}** - missing permissions",
+                        discord.Color.red()
+                    )
+                except Exception as e:
+                    print(f"[{guild.name}] Error kicking {member.name}: {e}")
+                    await log_to_mod_channel(
+                        guild_id,
+                        f"⚠️ Error kicking **{member.mention}**: {e}",
+                        discord.Color.red()
+                    )
 
-                # Log successful kick
-                await log_to_mod_channel(
-                    f"❌ Kicked **{member.name}** (ID: {member.id}) for not introducing themselves",
-                    discord.Color.dark_red()
-                )
+        # Remove kicked members from pending list
+        for user_id in to_remove:
+            del pending_members[user_id]
 
-            except discord.Forbidden:
-                print(f"Missing permissions to kick {member.name}")
-                await log_to_mod_channel(
-                    f"⚠️ Failed to kick **{member.mention}** - missing permissions",
-                    discord.Color.red()
-                )
-            except Exception as e:
-                print(f"Error kicking {member.name}: {e}")
-                await log_to_mod_channel(
-                    f"⚠️ Error kicking **{member.mention}**: {e}",
-                    discord.Color.red()
-                )
-
-    # Remove kicked members from pending list
-    for user_id in to_remove:
-        del pending_members[user_id]
-
-    if to_remove or save_needed:
-        save_pending_members(pending_members)
+        if to_remove or save_needed:
+            save_guild_pending(guild_id, pending_members)
 
 @check_introductions.before_loop
 async def before_check():
@@ -444,6 +529,10 @@ async def before_check():
 @commands.has_permissions(administrator=True)
 async def check_pending(ctx):
     """Check how many members are pending introduction"""
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    pending_members = guild_data['pending']
+
     if not pending_members:
         await ctx.send("No members are pending introduction.")
         return
@@ -459,10 +548,10 @@ async def check_pending(ctx):
 
             # Show reminder status
             status = []
-            if user_data['reminded_24']:
-                status.append("24hr ✓")
-            if user_data['reminded_48']:
-                status.append("48hr ✓")
+            for reminder_hour in REMINDER_TIMES:
+                reminder_key = f'reminded_{reminder_hour}'
+                if user_data.get(reminder_key, False):
+                    status.append(f"{reminder_hour}hr ✓")
             status_str = f" ({', '.join(status)})" if status else ""
 
             embed.add_field(
@@ -477,20 +566,29 @@ async def check_pending(ctx):
 @commands.has_permissions(administrator=True)
 async def set_intro_channel(ctx, channel: discord.TextChannel):
     """Set the introductions channel"""
-    global INTRO_CHANNEL_ID
-    INTRO_CHANNEL_ID = channel.id
-    save_config()
+    guild_id = str(ctx.guild.id)
+
+    # Update cached config in-place to avoid race conditions
+    guild_data = get_guild_data(guild_id)
+    guild_data['config']['intro_channel_id'] = channel.id
+    save_guild_config(guild_id, guild_data['config'])
+
     await ctx.send(f"✅ Introductions channel set to {channel.mention} (saved)")
 
 @bot.command(name='setmodlog')
 @commands.has_permissions(administrator=True)
 async def set_mod_log(ctx, channel: discord.TextChannel):
     """Set the mod log channel"""
-    global MOD_LOG_CHANNEL_ID
-    MOD_LOG_CHANNEL_ID = channel.id
-    save_config()
+    guild_id = str(ctx.guild.id)
+
+    # Update cached config in-place to avoid race conditions
+    guild_data = get_guild_data(guild_id)
+    guild_data['config']['mod_log_channel_id'] = channel.id
+    save_guild_config(guild_id, guild_data['config'])
+
     await ctx.send(f"✅ Mod log channel set to {channel.mention} (saved)")
     await log_to_mod_channel(
+        guild_id,
         f"✅ Mod logging enabled by **{ctx.author.mention}**",
         discord.Color.green()
     )
@@ -499,11 +597,16 @@ async def set_mod_log(ctx, channel: discord.TextChannel):
 @commands.has_permissions(administrator=True)
 async def set_welcome_role(ctx, role: discord.Role):
     """Set the welcome role to assign after introductions"""
-    global WELCOME_ROLE_ID
-    WELCOME_ROLE_ID = role.id
-    save_config()
+    guild_id = str(ctx.guild.id)
+
+    # Update cached config in-place to avoid race conditions
+    guild_data = get_guild_data(guild_id)
+    guild_data['config']['welcome_role_id'] = role.id
+    save_guild_config(guild_id, guild_data['config'])
+
     await ctx.send(f"✅ Welcome role set to {role.mention} (saved)")
     await log_to_mod_channel(
+        guild_id,
         f"✅ Welcome role set to {role.mention} by **{ctx.author.mention}**",
         discord.Color.green()
     )
@@ -512,22 +615,29 @@ async def set_welcome_role(ctx, role: discord.Role):
 @commands.has_permissions(administrator=True)
 async def mark_introduced(ctx, member: discord.Member):
     """Manually mark a member as introduced"""
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    config = guild_data['config']
+    pending_members = guild_data['pending']
+    introduced_members = guild_data['introduced']
+
     user_id = str(member.id)
 
     # Add to introduced cache
     introduced_members.add(member.id)
-    save_introduced_members(introduced_members)
+    save_guild_introduced(guild_id, introduced_members)
 
     # Remove from pending if tracked
     was_pending = user_id in pending_members
     if was_pending:
         del pending_members[user_id]
-        save_pending_members(pending_members)
+        save_guild_pending(guild_id, pending_members)
 
     # Assign welcome role if configured
-    if WELCOME_ROLE_ID != 0:
+    welcome_role_id = config.get('welcome_role_id', 0)
+    if welcome_role_id != 0:
         try:
-            role = ctx.guild.get_role(WELCOME_ROLE_ID)
+            role = ctx.guild.get_role(welcome_role_id)
             if role and role not in member.roles:
                 await member.add_roles(role, reason="Manually marked as introduced")
         except discord.Forbidden:
@@ -537,6 +647,7 @@ async def mark_introduced(ctx, member: discord.Member):
     await ctx.send(f"✅ Marked {member.mention} as introduced {status}")
 
     await log_to_mod_channel(
+        guild_id,
         f"✅ **{ctx.author.mention}** manually marked **{member.mention}** as introduced",
         discord.Color.green()
     )
@@ -545,6 +656,10 @@ async def mark_introduced(ctx, member: discord.Member):
 @commands.has_permissions(administrator=True)
 async def untrack_member(ctx, member: discord.Member):
     """Remove a member from tracking without kicking them"""
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    pending_members = guild_data['pending']
+
     user_id = str(member.id)
 
     if user_id not in pending_members:
@@ -552,11 +667,12 @@ async def untrack_member(ctx, member: discord.Member):
         return
 
     del pending_members[user_id]
-    save_pending_members(pending_members)
+    save_guild_pending(guild_id, pending_members)
 
     await ctx.send(f"✅ Stopped tracking {member.mention} (they will not be kicked)")
 
     await log_to_mod_channel(
+        guild_id,
         f"⏸️ **{ctx.author.mention}** stopped tracking **{member.mention}**",
         discord.Color.blue()
     )
@@ -565,17 +681,27 @@ async def untrack_member(ctx, member: discord.Member):
 @commands.has_permissions(administrator=True)
 async def reset_cache(ctx):
     """Rebuild the introduced members cache from intro channel history"""
-    if INTRO_CHANNEL_ID == 0:
+    guild_id = str(ctx.guild.id)
+    config = load_guild_config(guild_id)
+    intro_channel_id = config.get('intro_channel_id', 0)
+
+    if intro_channel_id == 0:
         await ctx.send("Please set the introductions channel first using !setintrochannel")
         return
 
     await ctx.send("Rebuilding cache from intro channel history...")
 
     # Clear current cache
+    guild_data = get_guild_data(guild_id)
+    introduced_members = guild_data['introduced']
     introduced_members.clear()
 
     # Rescan
-    await scan_intro_channel_history()
+    await scan_intro_channel_history(guild_id, intro_channel_id)
+
+    # Reload to get updated count
+    guild_data = get_guild_data(guild_id)
+    introduced_members = guild_data['introduced']
 
     await ctx.send(f"✅ Cache rebuilt! Now tracking {len(introduced_members)} introduced members.")
 
@@ -583,6 +709,11 @@ async def reset_cache(ctx):
 @commands.has_permissions(administrator=True)
 async def cleanup_tracking(ctx):
     """Remove members who left the server from tracking lists"""
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    pending_members = guild_data['pending']
+    introduced_members = guild_data['introduced']
+
     # Clean up pending members
     pending_removed = []
     for user_id in list(pending_members.keys()):
@@ -592,7 +723,7 @@ async def cleanup_tracking(ctx):
             del pending_members[user_id]
 
     if pending_removed:
-        save_pending_members(pending_members)
+        save_guild_pending(guild_id, pending_members)
 
     # Clean up introduced members
     current_member_ids = {m.id for m in ctx.guild.members}
@@ -603,7 +734,7 @@ async def cleanup_tracking(ctx):
             introduced_members.remove(user_id)
 
     if introduced_removed:
-        save_introduced_members(introduced_members)
+        save_guild_introduced(guild_id, introduced_members)
 
     # Report
     embed = discord.Embed(title="Cleanup Complete", color=discord.Color.green())
@@ -617,6 +748,12 @@ async def cleanup_tracking(ctx):
 @commands.has_permissions(administrator=True)
 async def show_stats(ctx):
     """Show bot statistics"""
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    config = guild_data['config']
+    pending_members = guild_data['pending']
+    introduced_members = guild_data['introduced']
+
     embed = discord.Embed(title="Introduction Bot Statistics", color=discord.Color.blue())
 
     # Clean up pending members who left the server
@@ -630,7 +767,7 @@ async def show_stats(ctx):
         del pending_members[user_id]
 
     if to_remove:
-        save_pending_members(pending_members)
+        save_guild_pending(guild_id, pending_members)
 
     # Pending members (still in server)
     pending_count = len(pending_members)
@@ -662,11 +799,13 @@ async def show_stats(ctx):
     if BOOSTER_GRACE_HOURS > 0:
         config_text += f"Booster Bonus: +{BOOSTER_GRACE_HOURS}h\n"
 
-    if EXEMPT_ROLE_IDS:
-        config_text += f"Exempt Roles: {len(EXEMPT_ROLE_IDS)}\n"
+    exempt_role_ids = config.get('exempt_role_ids', [])
+    if exempt_role_ids:
+        config_text += f"Exempt Roles: {len(exempt_role_ids)}\n"
 
-    if WELCOME_ROLE_ID != 0:
-        role = ctx.guild.get_role(WELCOME_ROLE_ID)
+    welcome_role_id = config.get('welcome_role_id', 0)
+    if welcome_role_id != 0:
+        role = ctx.guild.get_role(welcome_role_id)
         config_text += f"Welcome Role: {role.mention if role else 'Not found'}\n"
 
     if MIN_INTRO_LENGTH > 0:
@@ -678,7 +817,8 @@ async def show_stats(ctx):
     embed.add_field(name="⚙️ Configuration", value=config_text, inline=False)
 
     # Recent activity (if we had a stats file, but we don't yet)
-    embed.set_footer(text=f"Intro Channel: #{bot.get_channel(INTRO_CHANNEL_ID).name}" if INTRO_CHANNEL_ID != 0 else "Intro channel not set")
+    intro_channel_id = config.get('intro_channel_id', 0)
+    embed.set_footer(text=f"Intro Channel: #{bot.get_channel(intro_channel_id).name}" if intro_channel_id != 0 else "Intro channel not set")
 
     await ctx.send(embed=embed)
 
@@ -746,13 +886,20 @@ async def show_help(ctx):
 @commands.has_permissions(administrator=True)
 async def scan_existing(ctx):
     """Scan existing members to find who hasn't posted in introductions"""
-    if INTRO_CHANNEL_ID == 0:
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    config = guild_data['config']
+    pending_members = guild_data['pending']
+    introduced_members = guild_data['introduced']
+
+    intro_channel_id = config.get('intro_channel_id', 0)
+    if intro_channel_id == 0:
         await ctx.send("Please set the introductions channel first using !setintrochannel")
         return
 
     await ctx.send("Scanning all members using cached data...")
 
-    intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
+    intro_channel = bot.get_channel(intro_channel_id)
     if not intro_channel:
         await ctx.send("Could not find the introductions channel.")
         return
@@ -796,7 +943,14 @@ async def scan_existing(ctx):
 @commands.has_permissions(administrator=True)
 async def track_existing(ctx, grace_hours: int = None):
     """Start tracking existing members who haven't introduced themselves"""
-    if INTRO_CHANNEL_ID == 0:
+    guild_id = str(ctx.guild.id)
+    guild_data = get_guild_data(guild_id)
+    config = guild_data['config']
+    pending_members = guild_data['pending']
+    introduced_members = guild_data['introduced']
+
+    intro_channel_id = config.get('intro_channel_id', 0)
+    if intro_channel_id == 0:
         await ctx.send("Please set the introductions channel first using !setintrochannel")
         return
 
@@ -810,7 +964,7 @@ async def track_existing(ctx, grace_hours: int = None):
 
     await ctx.send("Adding unintroduced members to tracking list...")
 
-    intro_channel = bot.get_channel(INTRO_CHANNEL_ID)
+    intro_channel = bot.get_channel(intro_channel_id)
     if not intro_channel:
         await ctx.send("Could not find the introductions channel.")
         return
@@ -825,11 +979,12 @@ async def track_existing(ctx, grace_hours: int = None):
         if member.bot:
             continue
         if member.id not in introduced_members and str(member.id) not in pending_members:
-            pending_members[str(member.id)] = {
-                'join_time': backdated_time.isoformat(),
-                'reminded_24': False,
-                'reminded_48': False
-            }
+            # Initialize with dynamic reminder keys based on REMINDER_TIMES
+            reminder_data = {'join_time': backdated_time.isoformat()}
+            for reminder_hour in REMINDER_TIMES:
+                reminder_data[f'reminded_{reminder_hour}'] = False
+
+            pending_members[str(member.id)] = reminder_data
             added_count += 1
 
             # Send them a DM notification
@@ -840,9 +995,9 @@ async def track_existing(ctx, grace_hours: int = None):
                     f"Thank you for understanding!"
                 )
             except discord.Forbidden:
-                print(f"Could not send DM to {member.name}")
+                print(f"[{ctx.guild.name}] Could not send DM to {member.name}")
 
-    save_pending_members(pending_members)
+    save_guild_pending(guild_id, pending_members)
 
     await ctx.send(
         f"Added {added_count} existing members to the tracking list. "
@@ -857,6 +1012,6 @@ if __name__ == "__main__":
         print("Error: DISCORD_BOT_TOKEN environment variable not set")
         print("Please set it with: export DISCORD_BOT_TOKEN='your_token_here'")
     else:
-        if INTRO_CHANNEL_ID == 0:
-            print("Warning: INTRO_CHANNEL_ID is not set. Use !setintrochannel command after starting.")
+        print("Starting Allo Bot with multi-server support...")
+        print("Use !setintrochannel in each server to configure the bot.")
         bot.run(TOKEN)

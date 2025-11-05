@@ -5,10 +5,11 @@ A feature-rich Discord bot that automatically manages member introductions with 
 ## Features
 
 ### Core Functionality
+- 🌐 **Multi-Server Support**: Use the bot in multiple Discord servers with independent configurations
 - 🎯 **Automatic Tracking**: Tracks new members and requires introductions
-- ⏰ **Configurable Reminders**: Send multiple reminders at custom intervals (default: 24h, 48h)
-- 🥾 **Auto-Kick**: Kicks members who don't introduce themselves within grace period (default: 72h)
-- 💾 **Persistent Memory**: Caches introduced members across bot restarts
+- ⏰ **Configurable Reminders**: Send multiple reminders at custom intervals (default: 12h)
+- 🥾 **Auto-Kick**: Kicks members who don't introduce themselves within grace period (default: 24h)
+- 💾 **Persistent Memory**: Per-guild caches of introduced members across bot restarts
 - 🔄 **Automatic Scanning**: Scans intro channel history on startup
 
 ### Advanced Features
@@ -70,29 +71,44 @@ python intro_bot.py
 
 ## Configuration
 
+### Multi-Server Support
+
+The bot now supports multiple Discord servers! Each server gets its own configuration and data files:
+- `config_GUILDID.json` - Server-specific settings (intro channel, mod log, roles)
+- `pending_GUILDID.json` - Members awaiting introduction in this server
+- `introduced_GUILDID.json` - Members who have introduced themselves in this server
+
+Use the setup commands in each server to configure the bot independently.
+
+### Per-Server Settings (configured via commands)
+
+Use these commands in each server to configure the bot:
+- `!setintrochannel #channel` - Set the introductions channel
+- `!setmodlog #channel` - Set the mod log channel (optional)
+- `!setwelcomerole @role` - Set role to assign after intro (optional)
+
+### Global Settings (applies to all servers)
+
 Edit these variables at the top of `intro_bot.py`:
 
-### Basic Settings
 ```python
-INTRO_CHANNEL_ID = 0              # Channel ID for introductions (use !setintrochannel)
-GRACE_PERIOD_HOURS = 72           # Hours before kick (default: 72)
+GRACE_PERIOD_HOURS = 24           # Hours before kick (default: 24)
 CHECK_INTERVAL_MINUTES = 60       # How often to check (default: 60)
-REMINDER_TIMES = [24, 48]         # When to send reminders in hours
-```
-
-### Advanced Settings
-```python
-EXEMPT_ROLE_IDS = []              # Role IDs exempt from intro requirement
-WELCOME_ROLE_ID = 0               # Role to assign after intro (0 = disabled)
-MOD_LOG_CHANNEL_ID = 0            # Channel for mod logs (0 = disabled)
+REMINDER_TIMES = [12]             # When to send reminders in hours
+MIN_INTRO_LENGTH = 0              # Minimum intro characters (0 = disabled)
+REQUIRE_KEYWORDS = []             # Required words in intro (empty = disabled)
 BOOSTER_GRACE_HOURS = 0           # Extra hours for boosters (0 = disabled)
 ```
 
-### Validation Settings
+### Safety Settings
+
 ```python
-MIN_INTRO_LENGTH = 0              # Minimum intro characters (0 = disabled)
-REQUIRE_KEYWORDS = []             # Required words in intro (empty = disabled)
+ENABLE_KICKING = False            # Set to True to actually kick members
+DRY_RUN_MODE = True               # If True, logs kicks but doesn't execute them
+ENABLE_BACKGROUND_CHECKS = True   # If False, disables reminder/kick loop (testing mode)
 ```
+
+**Testing Mode**: Set `ENABLE_BACKGROUND_CHECKS = False` to test bot features (rescanning, commands, role assignment) without sending any reminder DMs or kicks. Perfect for verifying functionality in production before going live!
 
 ### Example Configurations
 
@@ -103,6 +119,7 @@ REMINDER_TIMES = [12, 24, 36]
 MIN_INTRO_LENGTH = 200
 REQUIRE_KEYWORDS = ["name", "age", "location"]
 ```
+Then in Discord: `!setintrochannel #introductions` and `!setwelcomerole @Member`
 
 **Relaxed Server** (no validation, 1 week deadline):
 ```python
@@ -110,13 +127,16 @@ GRACE_PERIOD_HOURS = 168
 REMINDER_TIMES = [72, 120]
 BOOSTER_GRACE_HOURS = 72  # Boosters get 10 days total
 ```
+Then in Discord: `!setintrochannel #welcome`
 
 **Gaming Community** (role rewards):
 ```python
-WELCOME_ROLE_ID = 123456789  # "Member" role
-EXEMPT_ROLE_IDS = [111111111, 222222222]  # Staff and VIP roles
-MOD_LOG_CHANNEL_ID = 987654321  # #mod-logs channel
+# Global settings already configured (24h grace, 12h reminder)
 ```
+Then in Discord:
+- `!setintrochannel #introductions`
+- `!setwelcomerole @Member`
+- `!setmodlog #mod-logs`
 
 ## Commands
 

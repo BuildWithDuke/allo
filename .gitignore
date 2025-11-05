@@ -3,9 +3,15 @@
 *.env
 
 # Bot data files (don't commit user data)
+# Old global files (deprecated)
 pending_members.json
 introduced_members.json
 bot_config.json
+
+# Per-guild files (multi-server support)
+config_*.json
+pending_*.json
+introduced_*.json
 
 # Python
 __pycache__/
